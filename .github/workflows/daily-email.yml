@@ -1,0 +1,54 @@
+name: Daily LatePost Email
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC = 22:00 EST
+  workflow_dispatch:
+
+env:
+  EMAIL_TO: HZ-lu2007@outlook.com
+  EMAIL_FROM: kimberagent@163.com
+  SMTP_HOST: smtp.163.com
+  SMTP_PORT: 465
+  SMTP_USER: kimberagent@163.com
+  SMTP_PASS: ${{ secrets.SMTP_PASS }}
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      # Step 1: 爬取最新文章
+      - name: Scrape latest articles
+        run: |
+          python -c "
+from simple_scraper import SimpleLatePostScraper
+scraper = SimpleLatePostScraper(output_dir='latepost_articles')
+# 从本地 feed.xml 获取最新 ID，没有则从 2830 开始
+latest_id = 2830
+import os
+if os.path.exists('feed.xml'):
+    import re
+    content = open('feed.xml').read()
+    m = re.search(r'<latestArticleId>(d+)</latestArticleId>', content)
+    if m: latest_id = int(m.group(1))
+start_id = latest_id + 1
+end_id = start_id + 5
+results = scraper.scrape_articles_range(start_id, end_id)
+print(f'Scraped: {results}')
+"
+
+      # Step 2: 更新本地 feed.xml（不推送 GitHub）
+      - name: Update local RSS feed
+        run: python update_feed_local.py
+
+      # Step 3: 发送邮件
+      - name: Send email
+        run: python send_email.py
