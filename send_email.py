@@ -29,7 +29,7 @@ MAX_ARTICLES = 10  # 每次最多发送文章数
 
 
 def read_articles():
-    """读取 latepost_articles/ 目录下的所有文章"""
+    """读取 latepost_articles/ 目录下的文章，优先返回当天新抓取的文章"""
     articles = []
     pattern = os.path.join(ARTICLES_DIR, "latepost_article_*.md")
     files = glob.glob(pattern)
@@ -41,17 +41,40 @@ def read_articles():
     # 按文件修改时间排序，最新的在前
     files.sort(key=os.path.getmtime, reverse=True)
     
-    for filepath in files[:MAX_ARTICLES]:
+    # 获取当前时间
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # 分离今天和之前的文章
+    today_articles = []
+    old_articles = []
+    
+    for filepath in files:
         try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
-            articles.append({
+            
+            article = {
                 'path': filepath,
                 'content': content,
                 'mtime': os.path.getmtime(filepath)
-            })
+            }
+            
+            if mtime >= today_start:
+                today_articles.append(article)
+            else:
+                old_articles.append(article)
         except Exception as e:
             print(f"读取文章失败 {filepath}: {e}")
+    
+    # 优先使用今天的文章，如果今天没有则使用最新的
+    if today_articles:
+        print(f"找到 {len(today_articles)} 篇今日新文章")
+        articles = today_articles[:MAX_ARTICLES]
+    else:
+        print(f"今日无新文章，使用最新的 {min(len(old_articles), MAX_ARTICLES)} 篇")
+        articles = old_articles[:MAX_ARTICLES]
     
     return articles
 
