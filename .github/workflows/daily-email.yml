@@ -2,15 +2,15 @@ name: Daily LatePost Email
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 3 * * *'  # 03:00 UTC = 22:00 EST
   workflow_dispatch:
 
 env:
-  EMAIL_TO: ${{ secrets.EMAIL_TO }}
-  EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-  SMTP_HOST: ${{ secrets.SMTP_HOST }}
-  SMTP_PORT: ${{ secrets.SMTP_PORT }}
-  SMTP_USER: ${{ secrets.SMTP_USER }}
+  EMAIL_TO: HZ-lu2007@outlook.com
+  EMAIL_FROM: kimberagent@163.com
+  SMTP_HOST: smtp.163.com
+  SMTP_PORT: 465
+  SMTP_USER: kimberagent@163.com
   SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
 jobs:
@@ -18,9 +18,68 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - run: pip install -r requirements.txt
-      - name: Run daily task
-        run: python daily_task.py
+
+      # Step 1: 爬取最新文章（带去重：跳过已存在的文章）
+      - name: Scrape latest articles
+        run: |
+          python -c "
+from simple_scraper import SimpleLatePostScraper
+import os, re, glob
+
+scraper = SimpleLatePostScraper(output_dir='latepost_articles')
+
+# 获取已存在的文章 ID（去重机制）
+existing_ids = set()
+for f in glob.glob('latepost_articles/latepost_article_*.md'):
+    m = re.search(r'latepost_article_(d+)', f)
+    if m: existing_ids.add(int(m.group(1)))
+
+# 从 feed.xml 获取最新 ID
+latest_id = 2830
+if os.path.exists('feed.xml'):
+    content = open('feed.xml').read()
+    m = re.search(r'<latestArticleId>(d+)</latestArticleId>', content)
+    if m: latest_id = int(m.group(1))
+
+# 找 5 篇新文章（跳过已存在的）
+new_articles = []
+current_id = latest_id + 1
+max_attempts = 20  # 最多尝试 20 个 ID，防止无限循环
+attempts = 0
+
+while len(new_articles) < 5 and attempts < max_attempts:
+    if current_id not in existing_ids:
+        new_articles.append(current_id)
+    current_id += 1
+    attempts += 1
+
+if new_articles:
+    print(f'Fetching new articles: {new_articles}')
+    results = scraper.scrape_articles_range(min(new_articles), max(new_articles))
+    print(f'Scraped: {results}')
+else:
+    print('No new articles to fetch')
+"
+
+      # Step 2: 更新本地 feed.xml
+      - name: Update local RSS feed
+        run: python update_feed_local.py
+
+      # Step 3: 提交 feed.xml 到仓库（持久化最新 ID）
+      - name: Commit updated feed.xml
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add feed.xml latepost_articles/
+          git diff --staged --quiet || git commit -m "Update feed and articles [skip ci]"
+          git push
+
+      # Step 4: 发送邮件（只发送新文章）
+      - name: Send email
+        run: python send_email.py
